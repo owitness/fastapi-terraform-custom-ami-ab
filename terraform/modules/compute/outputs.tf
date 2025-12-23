@@ -22,3 +22,13 @@ output "ec2_security_group_id" {
   description = "Security group ID for EC2 instances"
   value       = aws_security_group.ec2.id
 }
+
+output "ami_id" {
+  description = "AMI ID being used by the launch template"
+  value       = data.aws_ami.fastapi_golden.id
+}
+
+output "ami_name" {
+  description = "AMI name being used"
+  value       = data.aws_ami.fastapi_golden.name
+}

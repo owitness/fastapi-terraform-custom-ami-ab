@@ -1,16 +1,27 @@
 # Data source for latest Amazon Linux 2023 AMI
-data "aws_ami" "amazon_linux_2023" {
+# Data source to find latest custom AMI built by Packer
+data "aws_ami" "fastapi_golden" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["self"]  # AMIs you own
 
   filter {
     name   = "name"
-    values = ["al2023-ami-*-x86_64"]
+    values = ["fastapi-golden-ami-${var.environment}-*"]
   }
 
   filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
+    name   = "tag:Environment"
+    values = [var.environment]
+  }
+
+  filter {
+    name   = "tag:ManagedBy"
+    values = ["Packer"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
   }
 }
 
@@ -167,12 +178,11 @@ resource "aws_lb_listener" "http" {
   tags = var.tags
 }
 
-# Launch Template
+# Launch Template - Uses Custom AMI!
 resource "aws_launch_template" "main" {
   name_prefix   = "${var.project_name}-${var.environment}-"
-  image_id      = data.aws_ami.amazon_linux_2023.id
+  image_id      = data.aws_ami.fastapi_golden.id  # Custom AMI!
   instance_type = var.instance_type
-  key_name      = var.key_name != "" ? var.key_name : null
 
   iam_instance_profile {
     name = aws_iam_instance_profile.ec2_profile.name
@@ -180,39 +190,7 @@ resource "aws_launch_template" "main" {
 
   vpc_security_group_ids = [aws_security_group.ec2.id]
 
-  # User data to install Docker and run demo application
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    # Update system packages
-    yum update -y
-    
-    # Install Docker
-    yum install -y docker
-    
-    # Start and enable Docker service
-    systemctl start docker
-    systemctl enable docker
-    
-    # Add ec2-user to docker group (allows running Docker without sudo)
-    usermod -a -G docker ec2-user
-    
-    # Install Python3 (required for Ansible)
-    yum install -y python3
-    
-    # Run a simple web server as a demo (port 80)
-    # This allows students to verify the infrastructure works immediately
-    # TIP: Replace httpd:latest with your own Docker image from Lab 1.2!
-    # Example: your-dockerhub-username/fastapi-cicd:latest
-    docker run -d \
-      --name demo-web \
-      --restart unless-stopped \
-      -p 80:80 \
-      httpd:latest
-    
-    # Log completion
-    echo "User data script completed at $(date)" >> /var/log/user-data.log
-  EOF
-  )
+  # NO USER DATA NEEDED! Everything is in the AMI!
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -232,6 +210,8 @@ resource "aws_launch_template" "main" {
         Name        = "${var.project_name}-${var.environment}-instance"
         Environment = var.environment
         ManagedBy   = "Terraform"
+        AMI_ID      = data.aws_ami.fastapi_golden.id
+        AMI_Name    = data.aws_ami.fastapi_golden.name
       }
     )
   }
@@ -240,11 +220,12 @@ resource "aws_launch_template" "main" {
 }
 
 # Auto Scaling Group
+# Auto Scaling Group
 resource "aws_autoscaling_group" "main" {
-  name                      = "${var.project_name}-${var.environment}-asg"
-  vpc_zone_identifier       = var.subnet_ids
-  target_group_arns         = [aws_lb_target_group.main.arn]
-  health_check_type         = "ELB"
+  name                = "${var.project_name}-${var.environment}-asg"
+  vpc_zone_identifier = var.subnet_ids
+  target_group_arns   = [aws_lb_target_group.main.arn]
+  health_check_type   = "ELB"
   health_check_grace_period = var.health_check_grace_period
 
   desired_capacity = var.desired_capacity
@@ -254,6 +235,15 @@ resource "aws_autoscaling_group" "main" {
   launch_template {
     id      = aws_launch_template.main.id
     version = "$Latest"
+  }
+
+  # Instance refresh for zero-downtime deployments
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 50
+      instance_warmup        = 60
+    }
   }
 
   tag {

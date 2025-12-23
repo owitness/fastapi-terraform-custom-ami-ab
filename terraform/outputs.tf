@@ -22,3 +22,13 @@ output "region" {
   description = "AWS region"
   value       = var.aws_region
 }
+
+output "ami_id" {
+  description = "AMI ID being used"
+  value       = module.compute.ami_id
+}
+
+output "ami_name" {
+  description = "AMI name being used"
+  value       = module.compute.ami_name
+}
